@@ -1,34 +1,29 @@
-// ping.mjs
-// Ping (GET) tới 1 URL (mặc định: http://127.0.0.1:5500/image.html)
-// Cách dùng:
-//   node ping.mjs
-//   node ping.mjs https://your-app.vercel.app/image.html
-//   TARGET=https://your-app.vercel.app/image.html node ping.mjs
+// api/ping.mjs
+export const config = { runtime: "nodejs", maxDuration: 30 };
 
-const DEFAULT_TARGET = "http://127.0.0.1:5500/image.html";
-
-function getTarget() {
-  const arg = process.argv[2];
-  const env = process.env.TARGET;
-  return (arg && arg.trim()) || (env && env.trim()) || DEFAULT_TARGET;
-}
-
-async function main() {
-  const target = getTarget();
-  const t0 = Date.now();
-  console.log("🔔 PING:", target);
+export default async function handler(req, res) {
   try {
-    // Node 18+ có fetch sẵn
-    const resp = await fetch(target, { method: "GET", cache: "no-store" });
+    const base = `http${req.headers["x-forwarded-proto"] === "https" ? "s" : ""}://${req.headers.host}`;
+    const urlObj = new URL(req.url, base);
+
+    // lấy URL mục tiêu (hoặc mặc định image.html)
+    const target = urlObj.searchParams.get("url") || "https://img-hd-kiot.vercel.app/image.html";
+
+    // thêm timestamp để tránh cache
+    const finalUrl = `${target}${target.includes("?") ? "&" : "?"}t=${Date.now()}`;
+
+    // gọi để refresh trang (chỉ GET)
+    const resp = await fetch(finalUrl, { method: "GET" });
     const text = await resp.text();
-    const ms = Date.now() - t0;
-    console.log(`✅ Status: ${resp.status} ${resp.statusText} — ${text.length} bytes — ${ms}ms`);
-    console.log("✅ Done (nếu image.html có code upload, nó sẽ tự chạy).");
-    process.exit(0);
+
+    return res.status(200).json({
+      ok: true,
+      status: resp.status,
+      url: finalUrl,
+      length: text.length,
+      message: "Trang đã được ping (refresh) thành công."
+    });
   } catch (e) {
-    console.error("❌ Ping lỗi:", e?.message || String(e));
-    process.exit(1);
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
-
-main();
