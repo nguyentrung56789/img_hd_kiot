@@ -1,5 +1,7 @@
 {
-  "name": "img_hd_kiot",
-  "version": "1.0.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@sparticuz/chromium": "^125.0.0",
+    "puppeteer-core": "^22.8.0"
+  }
 }
