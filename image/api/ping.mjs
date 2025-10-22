@@ -1,26 +1,29 @@
-export const config = { runtime: "nodejs" };
+// api/ping.mjs
+export const config = { runtime: "nodejs", maxDuration: 30 };
 
 export default async function handler(req, res) {
   try {
     const base = `http${req.headers["x-forwarded-proto"] === "https" ? "s" : ""}://${req.headers.host}`;
-    const u = new URL(req.url, base);
+    const urlObj = new URL(req.url, base);
 
-    const target = u.searchParams.get("url");
-    if (!target) return res.status(400).json({ ok: false, error: "Missing ?url=" });
+    // lấy URL mục tiêu (hoặc mặc định image.html)
+    const target = urlObj.searchParams.get("url") || "https://img-hd-kiot.vercel.app/image.html";
 
-    const t0 = Date.now();
-    const r = await fetch(target, { method: "GET", cache: "no-store" });
-    const text = await r.text();
-    const ms = Date.now() - t0;
+    // thêm timestamp để tránh cache
+    const finalUrl = `${target}${target.includes("?") ? "&" : "?"}t=${Date.now()}`;
+
+    // gọi để refresh trang (chỉ GET)
+    const resp = await fetch(finalUrl, { method: "GET" });
+    const text = await resp.text();
 
     return res.status(200).json({
       ok: true,
-      status: r.status,
-      url: target,
+      status: resp.status,
+      url: finalUrl,
       length: text.length,
-      elapsedMs: ms
+      message: "Trang đã được ping (refresh) thành công."
     });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 }
