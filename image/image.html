@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Render PNG (img_hd_kiot ➜ images)</title>
+
+<script src="./js/internal_key.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<style>
+  html,body{margin:0;padding:0;background:#fff}
+  #stage{background:#fff;width:794px;margin:auto}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+(async()=> {
+  try{
+    if(typeof getConfig!=='function') throw new Error('Thiếu getConfig()');
+    const SUPABASE_URL = getConfig('url');
+    const ANON         = getConfig('anon');
+
+    // ---- nguồn HTML (bucket A)
+    const HTML_BUCKET  = 'img_hd_kiot';
+    const HTML_KEY     = 'img_hd.html';
+    const htmlUrl = `${SUPABASE_URL}/storage/v1/object/public/${HTML_BUCKET}/${HTML_KEY}`;
+
+    // ---- đích PNG (bucket B)
+    const PNG_BUCKET   = 'images';
+    const PNG_KEY      = 'img_hd.png';              // đổi tên nếu muốn
+    const uploadUrl    = `${SUPABASE_URL}/storage/v1/object/${PNG_BUCKET}/${PNG_KEY}`;
+    const publicPngUrl = `${SUPABASE_URL}/storage/v1/object/public/${PNG_BUCKET}/${PNG_KEY}`;
+
+    // 1) tải HTML
+    const resp = await fetch(htmlUrl, { mode:'cors', cache:'no-store' });
+    if(!resp.ok) throw new Error('Không tải được HTML: ' + resp.status);
+    const html = await resp.text();
+
+    // 2) đưa vào stage
+    const doc = new DOMParser().parseFromString(html,'text/html');
+    const styles   = [...doc.head.querySelectorAll('style')].map(s=>s.outerHTML).join('\n');
+    const bodyHTML = doc.body?.innerHTML || html;
+    const stage = document.getElementById('stage');
+    stage.innerHTML = styles + '\n' + bodyHTML;
+
+    // 3) chờ ảnh load
+    await Promise.all([...stage.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => (i.onload=i.onerror=r))));
+
+    // 4) render PNG
+    const canvas = await html2canvas(stage, { backgroundColor:'#fff', scale:2, useCORS:true });
+    const blob   = await new Promise(res => canvas.toBlob(res, 'image/png'));
+
+    // 5) upload PNG (ghi đè)
+    const up = await fetch(uploadUrl, {
+      method:'POST',
+      headers:{
+        'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5d3RnZHRzeGFqY3psanNwd3hlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjczMjU2NCwiZXhwIjoyMDcyMzA4NTY0fQ.z0re_7rP4COpMNARZ1-8U9bwF9bwH8YQOePYyHWMGto`,
+        'Content-Type' : 'image/png',
+        'x-upsert'     : 'true'
+      },
+      body: blob
+    });
+    if(!up.ok){
+      const t = await up.text().catch(()=> '');
+      throw new Error('Upload PNG lỗi: ' + up.status + ' ' + t);
+    }
+
+    // 6) xong
+    console.log('✅ PNG:', publicPngUrl);
+  }catch(e){
+    console.error(e);
+    document.body.innerText = 'Lỗi: ' + (e.message || e);
+  }
+})();
+</script>
+</body>
+</html>

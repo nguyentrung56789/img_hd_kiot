@@ -1,0 +1,9 @@
+{
+  "name": "render-html-to-png",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sparticuz/chromium": "^133",
+    "puppeteer-core": "^22"
+  }
+}
