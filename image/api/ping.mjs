@@ -35,21 +35,47 @@ export default async function handler(req, res) {
     const html = await htmlResp.text();
 
     // 2) render HTML -> PNG bằng Chromium (server-side)
+    //    ✅ BÓP KHỔ 80mm ≈ 302px mà KHÔNG SỬA HTML HÓA ĐƠN
+    const BILL_WIDTH_PX = 302; // ~80mm ở 96dpi
+    const SCALE = 2;           // ảnh nét hơn
     const execPath = await chromium.executablePath();
     const browser = await puppeteer.launch({
       args: chromium.args,
       headless: chromium.headless,
       executablePath: execPath,
-      defaultViewport: { width: 900, height: 1024, deviceScaleFactor: 2 }
+      defaultViewport: { width: BILL_WIDTH_PX, height: 1000, deviceScaleFactor: SCALE }
     });
+
     const page = await browser.newPage();
     await page.setCacheEnabled(false);
     await page.setContent(html, { waitUntil: "networkidle0" });
+
+    // Không chạm HTML: chỉ đảm bảo nền trắng để PNG đẹp
     await page.evaluate(() => {
       document.documentElement.style.background = "#fff";
       document.body.style.background = "#fff";
     });
-    const png = await page.screenshot({ type: "png", fullPage: true });
+
+    // Đợi tài nguyên (font/ảnh) nạp xong
+    await page.waitForTimeout(300);
+
+    // Tính chiều cao thật của nội dung để cắt đúng khổ (ngang 302px, cao linh hoạt)
+    const fullHeight = await page.evaluate(() => {
+      // Lấy chiều cao lớn nhất giữa body & documentElement
+      const b = document.body;
+      const e = document.documentElement;
+      return Math.max(
+        b.scrollHeight, b.offsetHeight, b.clientHeight,
+        e.scrollHeight, e.offsetHeight, e.clientHeight
+      );
+    });
+
+    const png = await page.screenshot({
+      type: "png",
+      fullPage: false, // 🔑 không chụp full trang A4, chỉ khung 302px
+      clip: { x: 0, y: 0, width: BILL_WIDTH_PX, height: Math.max(1, fullHeight) }
+    });
+
     await browser.close();
 
     // 3) upload PNG vào cùng bucket/thư mục
@@ -68,10 +94,10 @@ export default async function handler(req, res) {
       return res.status(500).end(`Upload PNG lỗi: ${up.status} ${t}`);
     }
 
-    // 4) trả kết quả
+    // 4) trả kết quả (giữ nguyên cách trả public URL)
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${PNG_KEY}`;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ ok: true, html: HTML_KEY, png: PNG_KEY, url: publicUrl }));
+    res.end(JSON.stringify({ ok: true, html: HTML_KEY, png: PNG_KEY, url: publicUrl, width_px: BILL_WIDTH_PX }));
   } catch (e) {
     res.statusCode = 500;
     res.end(`Ping render error: ${e.message}`);
