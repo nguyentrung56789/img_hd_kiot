@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     // ---- cấu hình cố định (1 thư mục, chỉ đổi đuôi) ----
     const BUCKET   = "img_hd_kiot";
     const HTML_KEY = "img_hd.html";
-    const PNG_KEY  = "img_hd.png";
+    const PNG_KEY = `img_hd_${Date.now()}.png`;
 
     // 1) lấy HTML từ Supabase
     const htmlURL = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURIComponent(HTML_KEY)}`;
