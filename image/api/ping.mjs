@@ -13,24 +13,71 @@ async function getInternalKeys(base) {
   return { SUPABASE_URL: url, SERVICE_KEY: role };
 }
 
+// Chỉ cho phép ký tự an toàn trong mã hoá đơn để tránh path traversal
+function sanitizeMaHD(v) {
+  if (!v) return "";
+  const s = String(v).trim();
+  // Cho phép chữ, số, gạch dưới, gạch ngang (VD: HD009167, HD-009167)
+  const ok = s.replace(/[^a-zA-Z0-9_-]/g, "");
+  return ok;
+}
+
+// Parse body JSON (dùng khi POST)
+async function readJsonBody(req) {
+  return await new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
 export const config = { runtime: "nodejs", maxDuration: 60 };
 
 export default async function handler(req, res) {
   try {
-    const base = `http${req.headers["x-forwarded-proto"]==="https"?"s":""}://${req.headers.host}`;
+    const base = `http${req.headers["x-forwarded-proto"] === "https" ? "s" : ""}://${req.headers.host}`;
     const { SUPABASE_URL, SERVICE_KEY } = await getInternalKeys(base);
 
-    // ---- cấu hình cố định (1 thư mục, chỉ đổi đuôi) ----
-    const BUCKET   = "img_hd_kiot";
-    const HTML_KEY = "img_hd.html";
-    const PNG_KEY = `img_hd_${Date.now()}.png`;
+    // ---- 0) Lấy ma_hd từ query hoặc body ----
+    let ma_hd = sanitizeMaHD(req.query?.ma_hd);
 
-    // 1) lấy HTML từ Supabase
+    if (!ma_hd && (req.method === "POST" || req.method === "PUT")) {
+      const body = await readJsonBody(req);
+      ma_hd = sanitizeMaHD(body?.ma_hd);
+    }
+
+    if (!ma_hd) {
+      res.statusCode = 400;
+      return res.end("Thiếu ma_hd. Gọi: /image/api/ping?ma_hd=HD009167 hoặc POST JSON {ma_hd:'HD009167'}");
+    }
+
+    // ---- cấu hình ----
+    const BUCKET = "img_hd_kiot";
+
+    // HTML theo mã hoá đơn (bạn upload sẵn file này vào bucket)
+    // Ví dụ: hoa_don_HD009167.html
+    const HTML_KEY = `hoa_don_${ma_hd}.html`;
+
+    // PNG output
+    const PNG_KEY = `hoa_don_${ma_hd}_${Date.now()}.png`;
+
+    // 1) lấy HTML từ Supabase Storage
     const htmlURL = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURIComponent(HTML_KEY)}`;
-    const htmlResp = await fetch(htmlURL, { headers: { Authorization: `Bearer ${SERVICE_KEY}` } });
+    const htmlResp = await fetch(htmlURL, {
+      headers: { Authorization: `Bearer ${SERVICE_KEY}` },
+      cache: "no-store",
+    });
+
     if (!htmlResp.ok) {
-      const txt = await htmlResp.text().catch(()=> "");
-      return res.status(502).end(`Không tải được HTML: ${htmlResp.status} ${txt}`);
+      const txt = await htmlResp.text().catch(() => "");
+      res.statusCode = 502;
+      return res.end(`Không tải được HTML (${HTML_KEY}): ${htmlResp.status} ${txt}`);
     }
     const html = await htmlResp.text();
 
@@ -40,8 +87,9 @@ export default async function handler(req, res) {
       args: chromium.args,
       headless: chromium.headless,
       executablePath: execPath,
-      defaultViewport: { width: 900, height: 1024, deviceScaleFactor: 2 }
+      defaultViewport: { width: 900, height: 1024, deviceScaleFactor: 2 },
     });
+
     const page = await browser.newPage();
     await page.setCacheEnabled(false);
     await page.setContent(html, { waitUntil: "networkidle0" });
@@ -49,29 +97,32 @@ export default async function handler(req, res) {
       document.documentElement.style.background = "#fff";
       document.body.style.background = "#fff";
     });
+
     const png = await page.screenshot({ type: "png", fullPage: true });
     await browser.close();
 
-    // 3) upload PNG vào cùng bucket/thư mục
+    // 3) upload PNG vào cùng bucket
     const uploadURL = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURIComponent(PNG_KEY)}`;
     const up = await fetch(uploadURL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${SERVICE_KEY}`,
         "Content-Type": "image/png",
-        "x-upsert": "true"
+        "x-upsert": "true",
       },
-      body: png
+      body: png,
     });
+
     if (!up.ok) {
-      const t = await up.text().catch(()=> "");
-      return res.status(500).end(`Upload PNG lỗi: ${up.status} ${t}`);
+      const t = await up.text().catch(() => "");
+      res.statusCode = 500;
+      return res.end(`Upload PNG lỗi: ${up.status} ${t}`);
     }
 
     // 4) trả kết quả
     const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${PNG_KEY}`;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ ok: true, html: HTML_KEY, png: PNG_KEY, url: publicUrl }));
+    res.end(JSON.stringify({ ok: true, ma_hd, html: HTML_KEY, png: PNG_KEY, url: publicUrl }));
   } catch (e) {
     res.statusCode = 500;
     res.end(`Ping render error: ${e.message}`);
