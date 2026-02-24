@@ -118,7 +118,7 @@ export default async function handler(req, res) {
       (ma_hd && `hoa_don_${ma_hd}`) ||
       `img_${HTML_KEY.replace(/\//g, "_").replace(/\.html$/i, "")}`;
 
-    const PNG_KEY = `${safeBase}_${Date.now()}.png`;
+    const PNG_KEY = `${safeBase}.png`;
 
     // ---- 5) upload PNG lên Supabase Storage ----
     const uploadURL = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURIComponent(PNG_KEY)}`;
